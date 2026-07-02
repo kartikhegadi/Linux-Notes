@@ -526,12 +526,3 @@ curl -s "$JENKINS_URL/job/$JOB_NAME/lastBuild/api/json" --user "$USER:$API_TOKEN
 8. Modify the service health check script to monitor a list of services instead of a single hardcoded one.
 9. Update the Kubernetes pod restart script to restart pods one at a time with a delay, instead of force-deleting all of them at once.
 10. Rewrite the Jenkins trigger script to poll the build status after triggering it and print the final result (success or failure) instead of exiting immediately.
-
-## 📝 Document Info
-
-| Field | Value |
-|---|---|
-| **Author** | Kartik Hegadi |
-| **Organization** | InfraCorps |
-| **Repository Topic** | Basic Scripting |
-| **Audience** | Learners |
