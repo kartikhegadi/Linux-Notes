@@ -1,116 +1,768 @@
 ## How the Linux Kernel Executes Programs
 
-We'll explore the inner workings of the Linux kernel, focusing on how it loads and executes binaries. We'll dive into the `execve` system call, build a custom kernel, and use debugging tools to see the execution process in action. Whether you're a seasoned developer or just curious about operating systems, this walkthrough aims to shed light on the fascinating journey from a command to a running program.
+When you type a command such as:
 
-### The Role of the `execve` System Call
+```bash
+ls
+```
 
-At the heart of program execution in Linux lies the `execve` system call. This function is responsible for replacing the current process image with a new one, effectively running a new program within the same process. When you run a command in the terminal, `execve` is the mechanism that makes it happen.
+a lot happens behind the scenes.
 
-In C, the function signature of `execve` is:
+The shell does not directly “become” `ls` by itself. Instead, it asks the Linux kernel to execute the program. The main system call involved is:
+
+```c
+execve()
+```
+
+The `execve` system call replaces the current process image with a new program.
+
+That means the process keeps the same process ID, but its memory, code, stack, arguments, and environment are replaced with those of the new program.
+
+A simple view looks like this:
+
+```text
+Before execve:
+
+Process PID 1234
++----------------------+
+| Program: shell       |
+| Code: /bin/bash      |
+| Args: bash           |
+| Env: PATH=...        |
++----------------------+
+
+execve("/bin/ls", ["ls"], envp)
+
+After execve:
+
+Process PID 1234
++----------------------+
+| Program: ls          |
+| Code: /bin/ls        |
+| Args: ls             |
+| Env: PATH=...        |
++----------------------+
+```
+
+The process did not get a new PID. It became a different program.
+
+### Big Picture
+
+Program execution usually involves several layers.
+
+```text
+User types command
+        |
+        v
+Shell parses command
+        |
+        v
+Shell usually calls fork()
+        |
+        v
+Child process calls execve()
+        |
+        v
+Kernel loads executable
+        |
+        v
+Kernel sets up memory, stack, arguments, environment
+        |
+        v
+Program starts running
+```
+
+For a normal shell command, the shell usually uses both:
+
+- fork()    create a child process
+- execve()  replace the child with the requested program
+
+This is why the shell survives after running a command.
+
+If the shell directly called `execve("ls", ...)` without forking first, the shell itself would be replaced by `ls`.
+
+### The `execve` System Call
+
+The C function signature is:
 
 ```c
 int execve(const char *pathname, char *const argv[], char *const envp[]);
 ```
 
-Let's break down the parameters:
+The arguments are:
 
-- The path to the executable file you want to run.
-- An array of argument strings passed to the new program.
-- An array of environment variables for the new program.
+- pathname   path to the program to execute
+- argv       argument vector passed to the new program
+- envp       environment variables passed to the new program
 
-When a program calls `execve`, the kernel loads the specified executable into memory, sets up the new environment, and starts executing the program from its entry point. The original process is overwritten, but it retains its process ID, which is why `execve` doesn't create a new process but transforms the existing one.
+Example:
 
-### Observing `execve` in Action with `strace`
+```c
+execve("/bin/ls", ["ls", "-l", "/tmp", NULL], envp);
+```
 
-To see how `execve` operates under the hood, we can use a tool called `strace`. This utility traces system calls made by a program, allowing us to observe interactions with the kernel.
+This asks the kernel to run:
 
-For example, if we want to see how the `ls` command is executed, we can run:
+```bash
+/bin/ls -l /tmp
+```
+
+The new program receives:
+
+```text
+argv[0] = "ls"
+argv[1] = "-l"
+argv[2] = "/tmp"
+```
+
+Environment variables such as `PATH`, `HOME`, `USER`, and `LANG` can also be passed to the new program.
+
+### Important Property of `execve`
+
+`execve` does not create a new process.
+
+It transforms the current process.
+
+- fork() creates a new process.
+- execve() replaces the current process image.
+
+This distinction is very important.
+
+```text
+Shell
+ |
+ | fork()
+ v
+Child process
+ |
+ | execve("/bin/ls")
+ v
+ls process
+```
+
+The shell remains alive because it forked first. The child becomes `ls`.
+
+### What the Kernel Does During `execve`
+
+When a process calls `execve`, the kernel performs several steps.
+
+1. Validate the executable path
+2. Check permissions
+3. Open the file
+4. Identify the binary format
+5. Load the program into memory
+6. Set up a new virtual address space
+7. Set up stack, arguments, and environment
+8. Configure registers
+9. Start execution at the program entry point
+
+A simplified kernel-side flow looks like this:
+
+```text
+execve()
+   |
+   v
+do_execveat_common()
+   |
+   v
+prepare binary parameters
+   |
+   v
+search_binary_handler()
+   |
+   +--> ELF executable      -> load_elf_binary()
+   |
+   +--> script with #!      -> load_script()
+   |
+   +--> other binary format -> matching handler
+   |
+   v
+set up memory mappings
+   |
+   v
+set up stack and registers
+   |
+   v
+jump to program entry point
+```
+
+Function names can vary slightly between kernel versions. On many modern kernels, useful functions to inspect include:
+
+- do_execveat_common
+- bprm_execve
+- search_binary_handler
+- load_elf_binary
+- start_thread
+
+### Observing `execve` with `strace`
+
+The easiest way to observe program execution is with `strace`.
+
+Run:
 
 ```bash
 strace -e execve ls
 ```
 
-The `-e execve` option tells `strace` to filter and display only `execve` system calls. When you run this command, you'll see output showing which executables are being invoked, along with the arguments and environment variables. This simple exercise reveals the essential role `execve` plays in running even the most basic commands.
+Example output:
 
-### Building a Custom Linux Kernel
+```text
+execve("/usr/bin/ls", ["ls"], 0x7ffc8e0a9b10 /* 45 vars */) = 0
+```
 
-To truly understand how the kernel executes programs, we can build our own version of the Linux kernel. This allows us to customize it for debugging and explore its internals.
+Interpretation:
 
-#### Cloning the Kernel Source Code
+- The program /usr/bin/ls was executed.
+- argv contained one argument: "ls".
+- The process received environment variables.
+- The return value is 0 in the trace because exec succeeded.
 
-Start by cloning the official Linux kernel repository:
+Normally, a successful `execve` does not return to the old program. If `execve` returns, it usually means it failed.
+
+Example failure:
+
+```bash
+strace -e execve /no/such/program
+```
+
+Example output:
+
+```text
+execve("/no/such/program", ["/no/such/program"], 0x7ffd...) = -1 ENOENT (No such file or directory)
+```
+
+Interpretation:
+
+- The kernel could not find the requested executable.
+- ENOENT means the file or path does not exist.
+
+### `execve` and the Shell
+
+When you run:
+
+```bash
+ls -l
+```
+
+the shell usually searches your `PATH` to find `ls`.
+
+If `PATH` includes:
+
+```text
+/usr/local/bin:/usr/bin:/bin
+```
+
+the shell may find:
+
+```text
+/usr/bin/ls
+```
+
+Then it runs something conceptually like:
+
+```c
+fork();
+execve("/usr/bin/ls", ["ls", "-l", NULL], envp);
+```
+
+The kernel does not search `PATH` for `execve`.
+
+Important distinction:
+
+- The shell searches PATH.
+- execve needs a pathname.
+
+Some higher-level functions, such as `execvp`, do search `PATH`, but they are library functions. They eventually call `execve`.
+
+### Executing Scripts
+
+Not every executable file is a compiled binary.
+
+A script may begin with a shebang line:
+
+```bash
+#!/bin/sh
+```
+
+Example script:
+
+```bash
+#!/bin/sh
+echo "Hello from script"
+```
+
+When the kernel sees the `#!` line, it uses the interpreter.
+
+```text
+Script file:
+./hello.sh
+
+First line:
+#!/bin/sh
+
+Kernel executes:
+/bin/sh ./hello.sh
+```
+
+The flow looks like this:
+
+```text
+execve("./hello.sh")
+        |
+        v
+Kernel sees #!/bin/sh
+        |
+        v
+Kernel executes interpreter
+        |
+        v
+execve("/bin/sh", ["/bin/sh", "./hello.sh"], envp)
+```
+
+This is why the interpreter path must be valid.
+
+If the shebang points to a missing interpreter, the script fails even if the script itself exists.
+
+### Executable Permissions
+
+For `execve` to work, permissions matter.
+
+Check a file:
+
+```bash
+ls -l ./hello
+```
+
+Example:
+
+```text
+-rwxr-xr-x 1 user user 16000 Jun 1 12:00 hello
+```
+
+The `x` bits mean the file is executable.
+
+If a file is not executable:
+
+```text
+-rw-r--r-- 1 user user 16000 Jun 1 12:00 hello
+```
+
+running it may fail:
+
+```bash
+./hello
+```
+
+Example output:
+
+```text
+bash: ./hello: Permission denied
+```
+
+Fix:
+
+```bash
+chmod +x ./hello
+```
+
+### Binary Formats
+
+Linux can execute several types of files through binary format handlers.
+
+Common examples:
+
+- ELF binaries
+- scripts with shebang lines
+- miscellaneous registered binary formats through binfmt_misc
+
+Most compiled Linux programs use the ELF format.
+
+ELF stands for Executable and Linkable Format.
+
+To inspect a binary:
+
+```bash
+file /bin/ls
+```
+
+Example output:
+
+```text
+/bin/ls: ELF 64-bit LSB pie executable, x86-64, dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2
+```
+
+Interpretation:
+
+- /bin/ls is an ELF executable.
+- It is for x86-64.
+- It is dynamically linked.
+- It uses a dynamic linker.
+
+### ELF Loading
+
+For ELF binaries, the kernel uses the ELF loader.
+
+A simplified ELF loading flow:
+
+```text
+Kernel opens executable
+        |
+        v
+Reads ELF header
+        |
+        v
+Checks architecture and format
+        |
+        v
+Maps program segments into memory
+        |
+        v
+Sets up stack with argv, envp, auxiliary vector
+        |
+        v
+Sets instruction pointer to entry point
+        |
+        v
+Program begins execution
+```
+
+To inspect the ELF header:
+
+```bash
+readelf -h /bin/ls
+```
+
+Example output:
+
+```text
+ELF Header:
+  Class:                             ELF64
+  Machine:                           Advanced Micro Devices X86-64
+  Entry point address:               0x61d0
+```
+
+Interpretation:
+
+- The binary is a 64-bit ELF file.
+- It targets x86-64.
+- The entry point is the address where execution begins.
+
+### Static and Dynamic Linking
+
+Programs can be statically linked or dynamically linked.
+
+- Static linking:
+  library code is included inside the executable
+
+- Dynamic linking:
+  the executable depends on shared libraries at runtime
+
+### Static Linking
+
+A statically linked binary contains the library code it needs.
+
+Compile statically:
+
+```bash
+gcc -static -o hello-static hello.c
+```
+
+Check it:
+
+```bash
+file hello-static
+```
+
+Example output:
+
+```text
+hello-static: ELF 64-bit LSB executable, x86-64, statically linked
+```
+
+Run:
+
+```bash
+ldd hello-static
+```
+
+Example output:
+
+```text
+not a dynamic executable
+```
+
+Interpretation:
+
+- The binary does not need the dynamic linker to load shared libraries.
+- Most required code is inside the executable.
+
+Static binaries are useful for initramfs environments because they do not need many external libraries.
+
+### Dynamic Linking
+
+Most normal Linux programs are dynamically linked.
+
+A dynamically linked program depends on shared libraries such as:
+
+- libc.so.6
+- libpthread.so
+- libm.so
+
+The kernel loads the executable and notices that it needs an interpreter, commonly:
+
+```text
+/lib64/ld-linux-x86-64.so.2
+```
+
+or on Debian/Ubuntu systems:
+
+```text
+/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+```
+
+Then the dynamic linker loads the shared libraries.
+
+```text
+Executable
+    |
+    v
+Kernel sees dynamic linker path
+    |
+    v
+Dynamic linker starts
+    |
+    v
+Shared libraries are loaded
+    |
+    v
+Program main() begins
+```
+
+Diagram:
+
+```text
++-------------------+       +-------------------+       +-------------------+
+| Executable        | ----> | Dynamic Linker    | ----> | Shared Libraries  |
+| ./myapp           |       | ld-linux...       |       | libc.so.6, etc.   |
++-------------------+       +-------------------+       +-------------------+
+```
+
+### Inspecting Shared Libraries with `ldd`
+
+Use:
+
+```bash
+ldd /usr/bin/ls
+```
+
+Example output:
+
+```text
+linux-vdso.so.1 (0x00007ffc12345000)
+libselinux.so.1 => /lib/x86_64-linux-gnu/libselinux.so.1
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+/lib64/ld-linux-x86-64.so.2
+```
+
+Interpretation:
+
+- /usr/bin/ls depends on shared libraries.
+- The dynamic linker found the libraries on the system.
+
+If a library is missing, `ldd` may show:
+
+```text
+libexample.so => not found
+```
+
+That means the program may fail to start.
+
+### Library Search Paths
+
+The dynamic linker searches for libraries using several sources.
+
+Common places include:
+
+- RPATH or RUNPATH embedded in the executable
+- LD_LIBRARY_PATH environment variable
+- /etc/ld.so.cache
+- /lib
+- /usr/lib
+- /lib64
+- /usr/lib64
+- distribution-specific library directories
+
+The flow is roughly:
+
+```text
+Program needs libexample.so
+        |
+        v
+Dynamic linker checks configured search paths
+        |
+        v
+If found, library is loaded
+        |
+        v
+If not found, program fails
+```
+
+### `ldconfig`
+
+The `ldconfig` command updates the shared library cache.
+
+The cache is stored at:
+
+```text
+/etc/ld.so.cache
+```
+
+To update it:
+
+```bash
+sudo ldconfig
+```
+
+To add a custom library directory:
+
+```bash
+echo "/opt/myapp/lib" | sudo tee /etc/ld.so.conf.d/myapp.conf
+sudo ldconfig
+```
+
+Check whether a library is known:
+
+```bash
+ldconfig -p | grep mylib
+```
+
+### `LD_LIBRARY_PATH`
+
+`LD_LIBRARY_PATH` temporarily adds directories to the library search path.
+
+Example:
+
+```bash
+export LD_LIBRARY_PATH=/opt/myapp/lib:$LD_LIBRARY_PATH
+./myapp
+```
+
+This is useful for testing and development.
+
+However, it can cause version conflicts if used carelessly.
+
+A good rule is:
+
+- Use LD_LIBRARY_PATH for temporary testing.
+- Use ldconfig or proper packaging for stable system-wide configuration.
+
+### Building a Custom Kernel for Learning
+
+Building a custom kernel is a useful way to understand how Linux executes programs internally.
+
+This is a lab activity. It should be done in a virtual machine, containerized build environment, or disposable test system.
+
+Do not replace the kernel on an important machine unless you understand kernel recovery.
+
+### Kernel Source
+
+Clone the kernel source:
 
 ```bash
 git clone https://github.com/torvalds/linux.git
-```
-
-This command downloads the entire kernel source code into a directory named `linux`. Navigate into this directory:
-
-```bash
 cd linux
 ```
 
-#### Configuring the Kernel
-
-Before compiling, we need to configure the kernel to suit our needs. We can generate a default configuration as a starting point:
+Create a default configuration:
 
 ```bash
 make defconfig
 ```
 
-This command creates a standard configuration file based on your system's architecture.
+This creates a `.config` file for your architecture.
 
-#### Customizing for Debugging
+### Debug-Friendly Kernel Configuration
 
-To make debugging easier and reduce compilation time, we'll adjust some settings:
+For kernel debugging, useful settings include:
 
-I. **Disable Address Space Layout Randomization (KASLR)**: KASLR randomizes the memory address where the kernel is loaded, which can complicate debugging. To disable it:
+- debug symbols
+- GDB scripts
+- kernel debugging options
+- disabled KASLR
+- simplified feature set
 
-- Run `make menuconfig` to open the configuration menu.
-- Navigate to **Processor type and features**.
-- Uncheck **Randomize the address of the kernel image (KASLR)**.
+Open the configuration menu:
 
-II. **Streamline the Kernel**: Disabling unnecessary features speeds up compilation and simplifies debugging.
+```bash
+make menuconfig
+```
 
-- Uncheck **Virtualization** in its respective section.
-- Uncheck **Enable loadable module support**.
-- Uncheck **Networking support**.
+Useful options to consider:
 
-III. **Enable Debugging Options**: These settings provide valuable information when debugging.
+- Enable debug info
+- Enable GDB scripts
+- Disable KASLR
+- Enable kernel debugger options if needed
+- Reduce unneeded drivers or features for faster builds
 
-- Enable **Compile the kernel with debug info**.
-- Enable **Provide GDB scripts for kernel debugging**.
-- kernel debugger**.
+KASLR means Kernel Address Space Layout Randomization. It randomizes where the kernel is loaded in memory.
 
-After making these changes, save your configuration and exit the menu.
+For debugging, disabling KASLR makes addresses easier to understand.
 
-#### Compiling the Kernel
+### Compiling the Kernel
 
-Now we're ready to compile the kernel:
+Build with all CPU cores:
 
 ```bash
 make -j$(nproc)
 ```
 
-The `-j$(nproc)` option tells `make` to use all available CPU cores, speeding up the process. Compiling the kernel can take some time, so feel free to take a break while it builds.
-
-Once compilation is complete, generate the GDB scripts:
+Build GDB helper scripts:
 
 ```bash
 make scripts_gdb
 ```
 
-These scripts help GDB (the GNU Debugger) understand kernel data structures during debugging sessions.
+The uncompressed debug kernel image is usually:
 
-### Creating an Initramfs with Custom Programs
+```text
+vmlinux
+```
 
-An initramfs (initial RAM filesystem) is a simple filesystem loaded into memory during the boot process. We'll create one containing a statically linked shell and a sample program to test our custom kernel.
+The bootable compressed kernel image on x86 is usually:
 
-#### Building a Statically Linked Shell
+```text
+arch/x86/boot/bzImage
+```
 
-First, we'll build a minimal shell to use as the initial process:
+### Initramfs
 
-I. **Download BusyBox**: BusyBox combines tiny versions of many common UNIX utilities into a single small executable.
+An initramfs is an initial RAM filesystem loaded by the kernel during boot.
+
+It provides a minimal user-space environment before the real root filesystem is mounted.
+
+For a kernel execution lab, an initramfs can contain:
+
+- a shell
+- basic utilities
+- test programs
+- an init script
+
+The kernel starts the first user-space process, usually:
+
+```text
+/init
+```
+
+inside the initramfs.
+
+### BusyBox
+
+BusyBox provides many small Unix utilities in one binary.
+
+It is commonly used in initramfs labs.
+
+Download and extract:
 
 ```bash
 wget https://busybox.net/downloads/busybox-1.35.0.tar.bz2
@@ -118,96 +770,107 @@ tar -xjf busybox-1.35.0.tar.bz2
 cd busybox-1.35.0
 ```
 
-II. **Configure for Static Linking**:
+Configure:
 
 ```bash
 make defconfig
-```
-
-Then, edit the `.config` file or run:
-
-```bash
 make menuconfig
 ```
 
-Under **BusyBox Settings**, ensure **Build BusyBox as a static binary (no shared libs)** is enabled.
+Enable:
 
-III. **Compile BusyBox**:
+- Build BusyBox as a static binary
+
+Build:
 
 ```bash
 make -j$(nproc)
-```
-
-IV. **Install BusyBox**:
-
-```bash
 make install
 ```
 
-This installs BusyBox into a `_install` directory.
+This creates:
 
-#### Preparing the Initramfs
+```text
+_install/
+```
 
-Create a directory to hold the initramfs contents:
+containing BusyBox and utility symlinks.
+
+### Creating a Minimal Initramfs
+
+Create directories:
 
 ```bash
 mkdir -p ../initramfs/{bin,sbin,etc,proc,sys,usr/{bin,sbin}}
 ```
 
-Copy BusyBox into the initramfs:
+Copy BusyBox files:
 
 ```bash
 cp -r _install/* ../initramfs/
 ```
 
-Create a simple `init` script that the kernel will execute first:
+Create `/init`:
 
 ```bash
 cat > ../initramfs/init << 'EOF'
-
 #!/bin/sh
 mount -t proc none /proc
 mount -t sysfs none /sys
 echo "Welcome to the custom initramfs shell!"
 exec /bin/sh
-
 EOF
 ```
 
-Make the script executable:
+Make it executable:
 
 ```bash
 chmod +x ../initramfs/init
 ```
 
-#### Adding a Sample Program
+Important note:
 
-Let's create a simple C program to test:
+- /init must be executable.
+- If /init is missing or not executable, the kernel may panic because it cannot start user space.
+
+### Adding a Test Program
+
+Create a small C program:
 
 ```bash
 cat > ../initramfs/hello.c << 'EOF'
-
 #include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
 
-int main() {
-  printf("Hello from the custom kernel!\n");
-  return 0;
+int main(void) {
+    printf("Hello from the custom kernel!\n");
+    return 0;
 }
-
 EOF
 ```
 
-Compile the program statically:
+Compile it statically:
 
 ```bash
 gcc -static -o ../initramfs/bin/hello ../initramfs/hello.c
 ```
 
-#### Creating the Initramfs Archive
+Check:
 
-Finally, create the initramfs cpio archive:
+```bash
+file ../initramfs/bin/hello
+```
+
+Expected output includes:
+
+```text
+statically linked
+```
+
+This matters because the minimal initramfs may not contain shared libraries.
+
+### Creating the Initramfs Archive
+
+From inside the initramfs directory:
 
 ```bash
 cd ../initramfs
@@ -215,212 +878,877 @@ find . -print0 | cpio --null -ov --format=newc | gzip -9 > ../initramfs.cpio.gz
 cd ..
 ```
 
-This command finds all files in the initramfs directory, creates a cpio archive in the `newc` format, and compresses it with gzip.
+This creates:
 
-### Booting the Custom Kernel with QEMU
+```text
+initramfs.cpio.gz
+```
 
-Now that we have a custom kernel and initramfs, we can boot them using QEMU, an open-source emulator that supports virtualization.
+The kernel can load this archive as its initial filesystem.
 
-#### Starting QEMU
+### Booting with QEMU
 
-Run the following command:
+QEMU can boot the custom kernel without replacing your real system kernel.
+
+Run:
 
 ```bash
 qemu-system-x86_64 \
--kernel linux/arch/x86/boot/bzImage \
--initrd initramfs.cpio.gz \
--append "console=ttyS0" \
--nographic \
--s -S
+  -kernel linux/arch/x86/boot/bzImage \
+  -initrd initramfs.cpio.gz \
+  -append "console=ttyS0" \
+  -nographic \
+  -s -S
 ```
 
-Here's what the options mean:
+Option meanings:
 
-- Specifies the path to the kernel image.
-- Specifies the initramfs archive.
-- Directs kernel messages to the serial console.
-- Disables graphical output; everything goes to the terminal.
-- Starts QEMU with GDB debugging enabled and pauses execution at startup.
+- -kernel    kernel image to boot
+- -initrd    initramfs archive
+- -append    kernel command-line arguments
+- console=ttyS0 sends output to serial console
+- -nographic uses terminal instead of graphical display
+- -s starts a GDB server on TCP port 1234
+- -S pauses CPU at startup until GDB continues execution
 
-With these options, QEMU waits for a debugger to connect before starting the kernel.
+The `-s -S` options are useful for debugging.
 
-### Debugging the Kernel with GDB
+### Debugging with GDB
 
-Now we can connect GDB to QEMU to debug the kernel.
-
-#### Connecting GDB
-
-In a new terminal window, navigate to the kernel source directory and start GDB:
+In another terminal:
 
 ```bash
 gdb linux/vmlinux
 ```
 
-Within GDB, connect to QEMU:
+Connect to QEMU:
 
 ```gdb
-(gdb) target remote :1234
+target remote :1234
 ```
 
-The kernel is now paused and ready for debugging.
+The kernel is paused.
 
-#### Setting Breakpoints
-
-Let's set a breakpoint at the `do_execve` function:
+Useful setup:
 
 ```gdb
-(gdb) break do_execve
+set pagination off
 ```
 
-Then, continue execution:
+Set a breakpoint.
+
+Depending on kernel version, try:
 
 ```gdb
-(gdb) continue
+break do_execveat_common
 ```
 
-Switch back to the QEMU terminal. The kernel should now boot and drop into our custom shell.
-
-### Observing Program Execution
-
-In the QEMU shell, run our sample program:
-
-```bash
-./hello
-```
-
-Because we set a breakpoint at `do_execve`, GDB will pause execution when the kernel attempts to execute `hello`.
-
-#### Stepping Through `do_execve`
-
-Back in GDB, we can step through the `do_execve` function to observe how the kernel handles the execution request:
+or:
 
 ```gdb
-(gdb) step
+break bprm_execve
 ```
 
-As you step through, pay attention to how the kernel prepares the binary for execution, including loading the executable, setting up memory spaces, and initializing the process environment.
-
-#### Inspecting Variables
-
-We can inspect variables and structures to understand the state of the kernel. For example, to view the binary parameters:
+or search for relevant symbols:
 
 ```gdb
-(gdb) print *bprm
+info functions execve
+info functions search_binary_handler
 ```
 
-This displays the contents of the `linux_binprm` structure, which holds information about the binary being executed.
-
-### Understanding Binary Format Handling
-
-The kernel supports multiple binary formats (like ELF, scripts, etc.). It determines how to execute a file based on its format.
-
-#### Exploring `search_binary_handler`
-
-The function `search_binary_handler` is responsible for finding the appropriate handler for the binary:
+Continue:
 
 ```gdb
-(gdb) break search_binary_handler
-(gdb) continue
+continue
 ```
 
-When the breakpoint hits, you can examine the available handlers:
+When you run a program inside QEMU, the breakpoint should trigger during execution.
+
+### Binary Handler Selection
+
+The kernel uses binary handlers to decide how to execute a file.
+
+The important function is commonly:
+
+```text
+search_binary_handler
+```
+
+It checks available handlers and selects the right one.
+
+Examples:
+
+- ELF binary       -> load_elf_binary
+- script with #!   -> script handler
+- other formats    -> other registered handlers
+
+Set a breakpoint:
 
 ```gdb
-(gdb) print fmt->name
+break search_binary_handler
+continue
 ```
 
-By continuing execution and checking the handler's name, you can see how the kernel selects the ELF handler for our compiled program.
+When it stops, inspect the execution path.
 
-### Loading the ELF Binary
-
-Once the ELF handler is selected, the kernel uses `load_elf_binary` to load the executable.
-
-#### Stepping into `load_elf_binary`
-
-Continue stepping through the code:
+For ELF binaries, another useful breakpoint is:
 
 ```gdb
-(gdb) step
+break load_elf_binary
+continue
 ```
 
-Within `load_elf_binary`, the kernel reads the ELF header, sets up memory mappings, and prepares the process for execution.
+### Program Entry Point
 
-#### Checking the ELF Header
+After loading the binary, the kernel prepares CPU registers so execution begins at the program entry point.
 
-You can examine the ELF header:
+On x86-64, the instruction pointer register controls the next instruction to execute.
+
+In kernel debugging, you may inspect something like:
 
 ```gdb
-(gdb) print elf_ex.e_ident
+print/x regs->ip
 ```
 
-This should display the magic numbers identifying the file as an ELF executable.
+The exact register structure and symbol names can vary by kernel version and architecture.
 
-### Starting the Program
-
-After loading the binary, the kernel sets up the initial CPU state and starts the program.
-
-#### Examining `start_thread`
-
-The `start_thread` function sets the instruction pointer and stack pointer for the new process:
-
-```gdb
-(gdb) step
-```
-
-Check the instruction pointer:
-
-```gdb
-(gdb) print/x regs->ip
-```
-
-This address should correspond to the entry point of our `hello` program.
-
-#### Verifying the Entry Point
-
-To confirm, you can check the entry point in the compiled binary:
+Compare with:
 
 ```bash
 readelf -h hello
 ```
 
-Look for the **Entry point address** and compare it to the instruction pointer value from GDB.
+Look for:
 
-### Resuming Execution
-
-Once the setup is complete, we can allow the program to run:
-
-```gdb
-(gdb) continue
+```text
+Entry point address
 ```
 
-Switch back to the QEMU terminal. You should see the message from our program:
+Interpretation:
 
+- The ELF entry point is where execution begins.
+- The kernel sets the process state so the CPU starts there.
+
+### Scenario 1: Observe `execve` for a Normal Command
+
+#### Goal
+
+See the system call used to execute a program.
+
+#### Simulate
+
+```bash
+strace -e execve ls
 ```
-Hello from the custom kernel!
+
+#### Example Output
+
+```text
+execve("/usr/bin/ls", ["ls"], 0x7ffc8e0a9b10 /* 45 vars */) = 0
 ```
 
-This indicates that the kernel successfully executed our program.
+#### Interpretation
 
-### Challenges
+- The ls command was executed using execve.
+- The path was /usr/bin/ls.
+- The argument list contained "ls".
+- The process received environment variables.
 
-1. Write a simple C program called `exec_test.c` that calls `execve` to run `/bin/echo` with arguments `echo HelloWorld`. Compile it and run it. Then, modify it to print a message before and after the `execve` call. Observe and explain why the “after” message never appears. Reflect on how `execve` replaces the current process image.
-2. Use `strace` to trace a command that invokes a shell script (e.g., `./myscript.sh`). In your script, have one line that executes another binary (e.g., `/bin/ls`). Run `strace -e execve ./myscript.sh` and identify each `execve` call in the output. Discuss how the kernel prepares and hands off execution at each stage.
-3. Clone the official Linux kernel repository (`git clone https://github.com/torvalds/linux.git`) into a directory of your choice. Navigate into it and run `make defconfig`. Without compiling the entire kernel, open the generated `.config` file and locate the configuration option for KASLR. Explain in your own words what KASLR does and why disabling it aids in kernel debugging.
-4. Perform a partial kernel configuration tweak: run `make menuconfig`, disable KASLR under **Processor type and features**, disable loadable module support, and disable networking support. Save the configuration and exit. Then, write a short paragraph (in a text file called `config_changes.txt`) describing each change you made and why it speeds up or simplifies debugging.
-5. In the kernel source directory, run `make -j$(nproc)` to compile the kernel (or at least start the compile until you feel comfortable pausing). While it’s building, investigate where the resulting `bzImage` and `vmlinux` files will reside once compilation completes. After compilation, locate and list the paths to those two files, then explain the difference between them (`bzImage` versus `vmlinux`).
-6. Download BusyBox (e.g., `wget https://busybox.net/downloads/busybox-1.35.0.tar.bz2`), extract it, and configure it for static linking (`make defconfig` + enable static in `menuconfig`). Build BusyBox statically and install it into a directory named `busybox_root`. Then, inspect the resulting BusyBox binary with `ldd busybox_root/bin/busybox` to verify it is truly statically linked, and write a brief note about why static linking matters for an initramfs.
-7. Create an `initramfs` directory structure (`mkdir -p initramfs/{bin,sbin,etc,proc,sys,usr/{bin,sbin}}`). Copy your static BusyBox files into `initramfs`. Write a minimal `init` script in `initramfs/init` that mounts `/proc` and `/sys`, prints “Custom Initramfs Loaded!”, and then invokes `/bin/sh`. Make the `init` script executable. Finally, create the cpio archive (`cd initramfs && find . -print0 | cpio --null -ov --format=newc | gzip -9 > ../initramfs.cpio.gz`). Verify the archive exists and note its size.
-8. Write a simple “Hello” C program (`hello.c`) in your `initramfs/bin` folder that prints “Hello from initramfs!”. Compile it statically (`gcc -static -o initramfs/bin/hello hello.c`). Verify via `file initramfs/bin/hello` that it is an ELF binary. Explain why the kernel will be able to run this program without any userspace libraries.
-9. In your GDB session, set a breakpoint at the kernel’s `do_execve` function (`break do_execve`) and continue. In the QEMU serial console, run `/bin/hello`. When GDB breaks at `do_execve`, step through (`step`) a few instructions and use `print *bprm` to inspect the `linux_binprm` structure. Write a short explanation (in a file called `gdb_inspection.txt`) of what `bprm` contains and how the kernel uses it to prepare the `hello` binary for execution.
-10. Install QEMU on your system (or verify it’s installed). Boot your newly compiled `bzImage` with your `initramfs.cpio.gz` using:
+#### Real Use
+
+Use this when you want to confirm which executable is actually being run.
+
+### Scenario 2: Show That `execve` Replaces the Current Process
+
+#### Goal
+
+Demonstrate that `execve` does not create a new PID.
+
+#### Create Program
+
+```bash
+cat > exec-demo.c << 'EOF'
+#include <stdio.h>
+#include <unistd.h>
+
+int main(void) {
+    printf("Before execve: PID=%d\n", getpid());
+
+    char *argv[] = {"/bin/echo", "Hello after execve", NULL};
+    char *envp[] = {NULL};
+
+    execve("/bin/echo", argv, envp);
+
+    perror("execve failed");
+    return 1;
+}
+EOF
+```
+
+Compile:
+
+```bash
+gcc -o exec-demo exec-demo.c
+```
+
+Run:
+
+```bash
+./exec-demo
+```
+
+#### Example Output
+
+```text
+Before execve: PID=8123
+Hello after execve
+```
+
+#### Interpretation
+
+- The program printed its PID before execve.
+- Then it was replaced by /bin/echo.
+- The original program did not continue after successful execve.
+
+The line after `execve` only runs if `execve` fails.
+
+### Scenario 3: Observe a Script Shebang
+
+#### Goal
+
+See how executing a script causes the interpreter to run.
+
+#### Create Script
+
+```bash
+cat > hello-script.sh << 'EOF'
+#!/bin/sh
+echo "hello from script"
+EOF
+
+chmod +x hello-script.sh
+```
+
+Trace it:
+
+```bash
+strace -e execve ./hello-script.sh
+```
+
+#### Example Output
+
+```text
+execve("./hello-script.sh", ["./hello-script.sh"], 0x7ffc...) = 0
+hello from script
+```
+
+Depending on tracing options and shell behavior, you may also observe `/bin/sh` being involved.
+
+#### Interpretation
+
+- The kernel sees the shebang line.
+- The script is executed through /bin/sh.
+- The script itself is not native machine code.
+
+#### Failure Case
+
+Change the shebang to a missing interpreter:
+
+```bash
+cat > bad-script.sh << 'EOF'
+#!/no/such/interpreter
+echo "this will not run"
+EOF
+
+chmod +x bad-script.sh
+./bad-script.sh
+```
+
+Example output:
+
+```text
+bash: ./bad-script.sh: cannot execute: required file not found
+```
+
+Interpretation:
+
+- The script exists.
+- The interpreter in the shebang does not exist.
+- Execution fails because the kernel cannot start the interpreter.
+
+### Scenario 4: Compare Static and Dynamic Binaries
+
+#### Goal
+
+Understand the difference between static and dynamic linking.
+
+#### Create Program
+
+```bash
+cat > hello.c << 'EOF'
+#include <stdio.h>
+
+int main(void) {
+    puts("hello");
+    return 0;
+}
+EOF
+```
+
+Compile dynamically:
+
+```bash
+gcc -o hello-dynamic hello.c
+```
+
+Compile statically:
+
+```bash
+gcc -static -o hello-static hello.c
+```
+
+Check:
+
+```bash
+file hello-dynamic hello-static
+```
+
+#### Example Output
+
+```text
+hello-dynamic: ELF 64-bit LSB pie executable, x86-64, dynamically linked
+hello-static:  ELF 64-bit LSB executable, x86-64, statically linked
+```
+
+Run `ldd`:
+
+```bash
+ldd hello-dynamic
+ldd hello-static
+```
+
+#### Example Output
+
+```text
+linux-vdso.so.1
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+/lib64/ld-linux-x86-64.so.2
+
+not a dynamic executable
+```
+
+#### Interpretation
+
+- The dynamic binary depends on shared libraries.
+- The static binary contains the needed library code.
+- The static binary is more suitable for minimal initramfs labs.
+
+### Scenario 5: Diagnose a Missing Shared Library
+
+#### Goal
+
+Practice identifying why a dynamically linked program fails to start.
+
+#### Simulate Conceptually
+
+If a program depends on a missing library, running `ldd` may show:
+
+```bash
+ldd ./myapp
+```
+
+Example output:
+
+```text
+libexample.so => not found
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+```
+
+#### Interpretation
+
+- The program requires libexample.so.
+- The dynamic linker cannot find it.
+- The program will likely fail at startup.
+
+#### Fix Options
+
+Temporary development fix:
+
+```bash
+export LD_LIBRARY_PATH=/opt/myapp/lib:$LD_LIBRARY_PATH
+./myapp
+```
+
+System-wide fix:
+
+```bash
+echo "/opt/myapp/lib" | sudo tee /etc/ld.so.conf.d/myapp.conf
+sudo ldconfig
+```
+
+Verify:
+
+```bash
+ldconfig -p | grep libexample
+```
+
+### Scenario 6: Boot a Minimal Initramfs and Run a Static Program
+
+#### Goal
+
+Verify that a custom kernel can start a minimal user space and execute a test program.
+
+#### Simulate
+
+Boot QEMU:
 
 ```bash
 qemu-system-x86_64 \
- -kernel path/to/arch/x86/boot/bzImage \
- -initrd initramfs.cpio.gz \
- -append "console=ttyS0" \
- -nographic \
- -s -S
+  -kernel linux/arch/x86/boot/bzImage \
+  -initrd initramfs.cpio.gz \
+  -append "console=ttyS0" \
+  -nographic
 ```
+
+Inside QEMU, run:
+
+```bash
+/bin/hello
+```
+
+#### Example Output
+
+```text
+Welcome to the custom initramfs shell!
+/ # /bin/hello
+Hello from the custom kernel!
+```
+
+#### Interpretation
+
+- The kernel booted successfully.
+- The initramfs /init script ran.
+- The shell started.
+- The test program executed successfully.
+
+This confirms that the kernel can load and execute a user-space ELF program.
+
+### Scenario 7: Break on Kernel Exec Path with GDB
+
+#### Goal
+
+Observe the kernel execution path when a program runs.
+
+#### Start QEMU Paused
+
+```bash
+qemu-system-x86_64 \
+  -kernel linux/arch/x86/boot/bzImage \
+  -initrd initramfs.cpio.gz \
+  -append "console=ttyS0" \
+  -nographic \
+  -s -S
+```
+
+#### Connect GDB
+
+```bash
+gdb linux/vmlinux
+```
+
+Inside GDB:
+
+```gdb
+target remote :1234
+set pagination off
+info functions execve
+break do_execveat_common
+continue
+```
+
+If the symbol is unavailable, try:
+
+```gdb
+break bprm_execve
+break search_binary_handler
+break load_elf_binary
+```
+
+#### Trigger Exec
+
+Inside QEMU:
+
+```bash
+/bin/hello
+```
+
+#### Example GDB Output
+
+```text
+Breakpoint 1, do_execveat_common (...)
+```
+
+#### Interpretation
+
+- The kernel reached the exec path.
+- The program execution request entered kernel code.
+- You can now step through the loading process.
+
+### Scenario 8: Observe ELF Handler Selection
+
+#### Goal
+
+Watch the kernel choose the correct binary format handler.
+
+#### GDB Breakpoints
+
+```gdb
+break search_binary_handler
+break load_elf_binary
+continue
+```
+
+Run inside QEMU:
+
+```bash
+/bin/hello
+```
+
+#### Example Interpretation
+
+- search_binary_handler is called.
+- The kernel checks available binary handlers.
+- For the hello program, the ELF handler is selected.
+- load_elf_binary handles the executable.
+
+This shows how Linux supports multiple executable formats.
+
+### Scenario 9: Compare ELF Entry Point with Kernel Register Setup
+
+#### Goal
+
+Connect the ELF entry point to where execution begins.
+
+#### Check Entry Point
+
+Inside the build host:
+
+```bash
+readelf -h initramfs/bin/hello
+```
+
+Example output:
+
+```text
+Entry point address:               0x401530
+```
+
+#### Inspect in GDB
+
+Near the end of ELF loading, inspect the instruction pointer setup.
+
+Example:
+
+```gdb
+print/x regs->ip
+```
+
+Example output:
+
+```text
+$1 = 0x401530
+```
+
+#### Interpretation
+
+- The ELF header says execution begins at 0x401530.
+- The kernel prepared the process so the CPU begins at that address.
+
+Exact addresses and structures may vary depending on architecture, compiler, static vs dynamic linking, and kernel version.
+
+### Scenario 10: Trace Dynamic Linker Involvement
+
+#### Goal
+
+Understand that dynamically linked programs involve the dynamic linker.
+
+#### Check a Normal Binary
+
+```bash
+file /bin/ls
+```
+
+Example:
+
+```text
+/bin/ls: ELF 64-bit LSB pie executable, x86-64, dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2
+```
+
+Inspect program headers:
+
+```bash
+readelf -l /bin/ls | grep interpreter
+```
+
+Example output:
+
+```text
+[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+```
+
+#### Interpretation
+
+- The executable asks the kernel to start the dynamic linker.
+- The dynamic linker loads required shared libraries.
+- Then the program begins normal execution.
+
+This is why dynamically linked binaries need the correct linker and libraries to exist in the runtime environment.
+
+### Common Problems and Fixes
+
+#### Problem: Permission Denied
+
+Example:
+
+```text
+bash: ./hello: Permission denied
+```
+
+Check:
+
+```bash
+ls -l ./hello
+```
+
+Fix:
+
+```bash
+chmod +x ./hello
+```
+
+Interpretation:
+
+```text
+The file exists, but it is not executable.
+```
+
+### Problem: No Such File or Directory
+
+Example:
+
+```text
+bash: ./hello: No such file or directory
+```
+
+Possible causes:
+
+- file path is wrong
+- interpreter is missing
+- dynamic linker is missing
+- required runtime path is missing
+
+Check:
+
+```bash
+ls -l ./hello
+file ./hello
+readelf -l ./hello | grep interpreter
+ldd ./hello
+```
+
+If `file` shows a dynamic interpreter that does not exist, the binary cannot start.
+
+### Problem: Missing Shared Library
+
+Example:
+
+```text
+error while loading shared libraries: libexample.so: cannot open shared object file
+```
+
+Check:
+
+```bash
+ldd ./myapp
+```
+
+Fix:
+
+```bash
+export LD_LIBRARY_PATH=/path/to/lib:$LD_LIBRARY_PATH
+```
+
+or:
+
+```bash
+echo "/path/to/lib" | sudo tee /etc/ld.so.conf.d/myapp.conf
+sudo ldconfig
+```
+
+### Problem: Initramfs Kernel Panic
+
+Example:
+
+```text
+Kernel panic - not syncing: No working init found
+```
+
+Possible causes:
+
+- /init missing
+- /init not executable
+- /init has wrong shebang
+- shell interpreter missing
+- BusyBox not copied correctly
+- initramfs archive created incorrectly
+
+Check initramfs contents:
+
+```bash
+mkdir /tmp/initramfs-check
+cd /tmp/initramfs-check
+zcat /path/to/initramfs.cpio.gz | cpio -idmv
+ls -l init
+file bin/busybox
+```
+
+Fix:
+
+```bash
+chmod +x init
+```
+
+Make sure `/bin/sh` exists.
+
+### Problem: GDB Breakpoint Does Not Work
+
+Possible causes:
+
+- function name changed in this kernel version
+- debug symbols are missing
+- KASLR is enabled
+- wrong vmlinux file is loaded
+- kernel was optimized in a way that changes symbol visibility
+
+Check symbols:
+
+```gdb
+info functions execve
+info functions binary_handler
+info functions load_elf
+```
+
+Make sure GDB uses:
+
+```text
+linux/vmlinux
+```
+
+not only the compressed `bzImage`.
+
+### Useful Command Summary
+
+Observe execution:
+
+```bash
+strace -e execve ls
+strace -f -e execve bash -c 'ls | wc -l'
+```
+
+Inspect binaries:
+
+```bash
+file ./program
+readelf -h ./program
+readelf -l ./program
+ldd ./program
+```
+
+Compile test programs:
+
+```bash
+gcc -o hello hello.c
+gcc -static -o hello-static hello.c
+```
+
+Library cache:
+
+```bash
+sudo ldconfig
+ldconfig -p | grep library
+```
+
+Kernel build:
+
+```bash
+git clone https://github.com/torvalds/linux.git
+cd linux
+make defconfig
+make menuconfig
+make -j$(nproc)
+make scripts_gdb
+```
+
+Initramfs archive:
+
+```bash
+find . -print0 | cpio --null -ov --format=newc | gzip -9 > ../initramfs.cpio.gz
+```
+
+QEMU boot:
+
+```bash
+qemu-system-x86_64 \
+  -kernel linux/arch/x86/boot/bzImage \
+  -initrd initramfs.cpio.gz \
+  -append "console=ttyS0" \
+  -nographic
+```
+
+QEMU with GDB:
+
+```bash
+qemu-system-x86_64 \
+  -kernel linux/arch/x86/boot/bzImage \
+  -initrd initramfs.cpio.gz \
+  -append "console=ttyS0" \
+  -nographic \
+  -s -S
+```
+
+GDB:
+
+```gdb
+target remote :1234
+break do_execveat_common
+break search_binary_handler
+break load_elf_binary
+continue
+```
+
+### Safe Lab Rules
+
+Kernel and QEMU labs can be complex. Use a safe environment.
+
+- Use a virtual machine or disposable lab system.
+- Do not replace your main system kernel.
+- Keep build directories organized.
+- Use static binaries in minimal initramfs environments.
+- Disable KASLR for easier debugging.
+- Expect kernel function names to vary by version.
+- Document the kernel version you are using.
+
+### Practical Challenges
+
+1. Run `strace -e execve ls` and explain the output.
+2. Write a small C program that calls `execve("/bin/echo", ...)`. Confirm that the original program does not continue after a successful `execve`.
+3. Create a script with a valid shebang and trace its execution. Then create a script with a broken shebang and explain the error.
+4. Compile the same `hello.c` program dynamically and statically. Compare `file` and `ldd` output.
+5. Use `readelf -h` to find the entry point of a compiled program.
+6. Use `readelf -l` to find the dynamic linker requested by a dynamically linked binary.
+7. Build a minimal initramfs with BusyBox and a static `hello` program.
+8. Boot a custom kernel and initramfs with QEMU.
+9. Attach GDB to QEMU and set breakpoints in the exec path.
+10. Write a short report explaining the path from typing a command in the shell to the kernel loading and starting the executable.
 
 Once QEMU is waiting for a debugger connection, open another terminal, navigate to your kernel source, and run `gdb vmlinux`. In GDB, do `target remote :1234` and then `continue`. Describe what you see on the QEMU console and why you’re dropped into your initramfs shell.

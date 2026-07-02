@@ -349,7 +349,6 @@ When you kick off a command in a shell, it either *grabs the terminal* (foregrou
 +------------------------+
 ```
 
-
 #### Starting a Job
 
 | What you type  | What happens                                                                  |
@@ -375,7 +374,7 @@ I. **Ctrl + Z** — sends **SIGTSTP**, pausing the job and parking it:
 ^Z          # you pressed Ctrl+Z
 [1]+  Stopped                 long_running_script.sh
 ```
-   
+
 II. **`bg %1`** — resumes that job *in the background*.
 
 III. **`fg %1`** — yanks it back to the foreground whenever you’re ready.
@@ -419,9 +418,8 @@ Column guide
 3. Demonstrate how to start a process in the background, bring it to the foreground, and then return it to the background.
 4. How can you terminate a process using either its PID or its name?
 5. Write a simple C program that creates a child process to execute a given command.
-6. Using the `top` command, identify the process consuming the most CPU resources and terminate it.
+6. Using the `top` or `htop` command, identify the process consuming the most CPU resources and terminate it. In `htop`, experiment with filtering processes by a specific string and sorting them by memory usage.
 7. How can you pause a running process with a signal and then resume it?
 8. How can you determine the parent process ID (PPID) of a given process?
 9. Explain the difference between a shell job and a daemon process.
 10. Why does a zombie process remain visible in `ps` output even after sending it a `SIGKILL`?
-11. Using the `htop` command, filter processes by a specific string and sort them by memory usage.

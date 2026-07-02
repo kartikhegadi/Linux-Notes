@@ -61,7 +61,7 @@ The pipe (`|`) character is an essential tool that allows for data to flow from 
 ```
 
 #### Example 1: Filtering User Details
-   
+
 Suppose you want to see details about a person named "user_name" using the `w` command and subsequently modify "user_name" to "admin". This can be done with:
 
 ```bash
@@ -224,6 +224,63 @@ Here, the `-c` option specifies the command to run, while `/dev/null` discards a
 | `\|& tee`   | Yes            | Yes            | Yes            | Yes            | Overwrite               |
 | `\|& tee -a`| Yes            | Yes            | Yes            | Yes            | Append                  |
 
+### Process Substitution
+
+Process substitution allows you to use the output of a command as if it were a file. This is especially useful when a command expects a filename argument but you want to supply the output of another command instead. Process substitution uses the syntax `<(command)` for input and `>(command)` for output.
+
+```
++--------------+         +--------------------+
+|   Command    | ------> | Temporary file-like|
+|  (Producer)  |         | descriptor created |
++--------------+         | by the shell       |
+                         +--------------------+
+                                  |
+                                  v
+                         +--------------+
+                         |   Consumer   |
+                         |  (reads it   |
+                         |   as a file) |
+                         +--------------+
+```
+
+#### Comparing Output of Two Commands
+
+A common use case is comparing the output of two commands with `diff`:
+
+```bash
+diff <(ls /etc) <(ls /usr/local/etc)
+```
+
+Here, `<(ls /etc)` and `<(ls /usr/local/etc)` each produce a temporary file descriptor containing the directory listing. The `diff` command then compares them as if they were regular files, without needing to create actual temporary files on disk.
+
+#### Feeding Command Output to Commands That Expect Files
+
+Some commands accept only file arguments and cannot read from standard input. Process substitution bridges that gap:
+
+```bash
+paste <(cut -f1 data.csv) <(cut -f3 data.csv)
+```
+
+This extracts the first and third columns from `data.csv` and pastes them side by side.
+
+#### Output Process Substitution
+
+The `>(command)` form redirects output into another command's standard input via a file descriptor:
+
+```bash
+tee >(grep "error" > errors.txt) >(grep "warning" > warnings.txt) > /dev/null
+```
+
+In this example, the input is simultaneously fed to two `grep` processes: one filtering for errors and another for warnings, each writing to its own file.
+
+#### Differences from Pipes
+
+While pipes connect one command's stdout to another's stdin in a linear chain, process substitution is more flexible:
+
+- A **pipe** connects exactly one producer to one consumer in sequence, flowing data in a single direction through the pipeline.
+- **Process substitution** allows multiple command outputs to be used as separate file arguments within a single command, enabling parallel input from several sources simultaneously.
+- Process substitution creates entries under `/dev/fd/` (or uses named pipes internally), making the output accessible as a file path that any command can open and read.
+
 ### Filters
 
 Filters are specialized commands designed to process text, typically working with streams of text data. They are predominantly used with pipes (`|`) to modify or analyze the output of another command. A filter reads input line by line, transforms it in some way, and then outputs the result. This processing method is particularly useful in Unix-like operating systems, where filters can be combined with other commands in a pipeline to perform complex text transformations and data analysis. Common examples of filters include `grep` for searching text, `sort` for arranging lines in a particular order, and `awk` for pattern scanning and processing. Filters are a fundamental part of command-line data manipulation, allowing users to efficiently process large amounts of text with simple, concise commands.
@@ -254,7 +311,7 @@ Let's take a look at a few examples:
 I. **Combine and sort the content of file1.txt and file2.txt, and redirect the sorted output to sorted.txt:**
 
 This command uses the `sort` utility to combine the contents of both `file1.txt` and `file2.txt` while sorting all the lines alphabetically (or numerically, if options are provided). By using the redirection operator `>`, the sorted output is saved into a new file called `sorted.txt`.  
- 
+
 Suppose **file1.txt** contains:  
 
 ```
@@ -287,7 +344,7 @@ cherry
 II. **Eliminate any adjacent duplicate lines from sorted.txt and save the result in deduped.txt:**
 
 After sorting, duplicate lines become adjacent. The `uniq` command then reads the sorted file and removes any consecutive duplicate lines. The output, which has duplicates eliminated, is redirected into a new file called `deduped.txt`. This is particularly useful when you need a list where each line is unique.  
-  
+
 Given the **sorted.txt** content from the previous step:  
 
 ```
@@ -314,7 +371,7 @@ cherry
 III. **Display lines containing the word "error" from deduped.txt:**
 
 The `grep` command is used to search within **deduped.txt** for lines that include the word "error". It is case-sensitive by default, so only lines with exactly "error" (all lowercase) will be matched. The matched lines are then printed to the terminal.  
-   
+
 If **deduped.txt** contains:  
 
 ```
@@ -342,7 +399,7 @@ error: file not found
 IV. **Show lines from deduped.txt that contain the pattern "error", along with the line number:**
 
 Using `awk`, this command searches for lines containing "error" in **deduped.txt** and prints the line number (`NR`, which represents the current record or line number) followed by the entire line. This gives you context on where each occurrence is located in the file.  
-  
+
 Consider **deduped.txt** with the following content:  
 
 ```
@@ -368,7 +425,7 @@ Expected output:
 V. **Replace all occurrences of 'old_word' with 'new_word' in file.txt:**
 
 The `sed` (Stream Editor) command in this example performs a substitution. The command will search through **file.txt** for every instance of `old_word` and replace it with `new_word`. The `g` flag at the end ensures that all occurrences on each line are replaced. Note that this command writes the changes to standard output; to update the file itself, you may need to use the `-i` (in-place) option depending on your shell or operating system.  
-  
+
 Assume **file.txt** contains:  
 
 ```
@@ -464,7 +521,7 @@ error: voltage drop detected
 
 Filters are very important components in the Unix philosophy of creating simple, modular tools that do one job and do it well. When used effectively, they provide powerful text processing capabilities with just a few keystrokes.
 
-## Challenges
+### Challenges
 
 1. Find the number of users currently logged in. Hint: Use the `who` or `w` command followed by a line count.
 2. Generate a sorted list of all system users. Hint: The `/etc/passwd` file contains user information.
@@ -475,5 +532,4 @@ Filters are very important components in the Unix philosophy of creating simple,
 7. From any text file of your choice, identify the ten most frequently occurring words and display their counts.
 8. Examine the `/etc/systemd/system` directory and list the service files that are currently active on the system.
 9. Search for words in a text file that are longer than 7 characters, contain the letter 'z', and display them sorted in reverse alphabetical order.
-10. Find the top five directories that consume the most disk space in your home directory. Hint: Use the `du` and `sort` commands.
-11. Starting from your home directory, list all files (recursively, including subdirectories) that were modified in the last 24 hours, sorted by their modification time. 
+10. Find the top five directories that consume the most disk space in your home directory using the `du` and `sort` commands. Then, starting from your home directory, list all files recursively (including subdirectories) that were modified in the last 24 hours, sorted by their modification time. 

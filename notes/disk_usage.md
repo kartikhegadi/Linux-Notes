@@ -2,10 +2,6 @@
 
 Managing and monitoring disk usage is necessary for server maintenance, allowing administrators to identify disk space shortages caused by large log files, such as Apache or system logs, and malfunctioning applications that generate excessive data. Tools like `df` provide quick overviews of available disk space, while `du` helps analyze directory sizes to locate space hogs. For planning future storage needs, tracking data growth with monitoring software like Nagios or Grafana enables accurate forecasting and timely upgrades of storage hardware or cloud solutions. Regularly cleaning up unused files involves deleting obsolete backups, removing temporary files from `/tmp`, archiving old user data, and eliminating redundant application caches using automated scripts or cleanup utilities like BleachBit.
 
-TODO:
-
-- grafana
-
 ### Understanding the df command
 
 The `df` (disk filesystem) command provides information about the filesystems on your machine. It shows details such as total size, used space, available space, and the percentage of space used. To display these statistics in a human-readable format, using units like KB, MB, or GB, you can use the `-h` (human-readable) option.
@@ -136,6 +132,97 @@ Once you've identified what's using your disk space, the next step is often to f
 - Using a disk cleanup utility can automate the process of deleting various unnecessary files. Tools like `bleachbit` can efficiently remove temporary files, cache, cookies, internet history, and log files, helping to free up space.
 - Archiving and compressing less frequently used data can also save space. Files and directories that are rarely accessed can be compressed using tools like `tar`, `gzip`, or `bzip2`, reducing their size and freeing up more disk space.
 
+### Managing Disk Quotas
+
+Disk quotas allow administrators to limit the amount of disk space or the number of files (inodes) that individual users or groups can consume on a filesystem. This prevents any single user from exhausting shared storage and helps maintain fair resource allocation on multi-user systems.
+
+#### Enabling Quotas on a Filesystem
+
+To use quotas, the filesystem must be mounted with quota options. Edit `/etc/fstab` to add `usrquota` and `grpquota` to the desired filesystem:
+
+```
+/dev/sda1  /home  ext4  defaults,usrquota,grpquota  0  2
+```
+
+After modifying `/etc/fstab`, remount the filesystem and initialize the quota database:
+
+```bash
+mount -o remount /home
+quotacheck -cug /home
+quotaon /home
+```
+
+- `quotacheck -cug` creates the `aquota.user` and `aquota.group` files that store quota information.
+- `quotaon` activates quota enforcement on the specified filesystem.
+
+#### Setting Quotas for a User
+
+Use the `edquota` command to set soft and hard limits for a specific user:
+
+```bash
+edquota -u username
+```
+
+This opens an editor displaying the current quota settings:
+
+```
+Disk quotas for user username (uid 1001):
+  Filesystem   blocks   soft     hard   inodes   soft   hard
+  /dev/sda1    51200    204800   256000   100      0      0
+```
+
+- **Soft limit** is a threshold that the user can temporarily exceed for a grace period before the system enforces restrictions.
+- **Hard limit** is the absolute maximum that cannot be exceeded under any circumstances.
+- **blocks** represent the amount of disk space in kilobytes, while **inodes** represent the number of files.
+
+#### Checking Quota Usage
+
+To display the current quota status for a specific user, run:
+
+```bash
+quota -u username
+```
+
+For a summary of all users' quota usage on a filesystem, use:
+
+```bash
+repquota /home
+```
+
+Example output:
+
+```
+*** Report for user quotas on device /dev/sda1
+Block grace time: 7days; Inode grace time: 7days
+                        Block limits                File limits
+User            used    soft    hard  grace    used  soft  hard  grace
+----------------------------------------------------------------------
+root      --   10240       0       0              5     0     0
+alice     --   51200  204800  256000            100     0     0
+bob       +-  230400  204800  256000  5days     320     0     0
+```
+
+The `+-` indicator next to `bob` shows that the user has exceeded the soft limit and is within the grace period.
+
+#### Setting Group Quotas
+
+Group quotas work similarly to user quotas. Use the `-g` flag to manage them:
+
+```bash
+edquota -g groupname
+repquota -g /home
+```
+
+#### Configuring the Grace Period
+
+The grace period determines how long a user can remain above the soft limit before it is enforced as a hard limit. To adjust it:
+
+```bash
+edquota -t
+```
+
+This opens an editor where you can set the grace period for both block and inode limits across the filesystem.
+
 ### Automating Disk Usage Checks
 
 For ongoing disk usage monitoring, consider setting up automated tasks. For instance, you can schedule a cron job that runs `df` and `du` at regular intervals and sends reports via email or logs them for later review.
@@ -173,6 +260,76 @@ du -x / | sort -nr | head -10 >> "$LOG_FILE"
 
 ```bash
 sudo chmod +x /path/to/disk_usage_monitor.sh && sudo mv /path/to/disk_usage_monitor.sh /etc/cron.daily/
+```
+
+### Monitoring Disk Usage with Grafana
+
+For long-term disk usage monitoring and visualization, Grafana provides powerful dashboarding capabilities when paired with a data collection agent like Prometheus and its Node Exporter.
+
+#### Installing Node Exporter
+
+Node Exporter collects hardware and OS metrics, including disk usage, and exposes them for Prometheus to scrape.
+
+```bash
+sudo apt install prometheus-node-exporter
+sudo systemctl enable --now prometheus-node-exporter
+```
+
+By default, Node Exporter listens on port `9100`. Verify it is running:
+
+```bash
+curl -s http://localhost:9100/metrics | grep node_filesystem_avail_bytes
+```
+
+Example output:
+
+```
+node_filesystem_avail_bytes{device="/dev/sda1",fstype="ext4",mountpoint="/"} 1.073741824e+10
+```
+
+The value is in bytes; `1.073741824e+10` equals roughly 10 GB of available space.
+
+#### Configuring Prometheus to Scrape Metrics
+
+Add the Node Exporter target to the Prometheus configuration file (`/etc/prometheus/prometheus.yml`):
+
+```yaml
+scrape_configs:
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+```
+
+Restart Prometheus to apply the change:
+
+```bash
+sudo systemctl restart prometheus
+```
+
+#### Setting Up Grafana Dashboards
+
+After installing Grafana and logging in (default at `http://localhost:3000`), add Prometheus as a data source, then import a community dashboard for disk metrics.
+
+I. Add Prometheus as a data source under **Configuration → Data Sources → Add data source**, and set the URL to `http://localhost:9090`.
+
+II. Import the **Node Exporter Full** dashboard (ID `1860`) via **Dashboards → Import**, which includes pre-built panels for disk space, inode usage, and I/O rates.
+
+III. Create custom alerts under **Alerting → Alert Rules** to trigger notifications when available disk space drops below a threshold:
+
+```
+node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.1
+```
+
+This PromQL expression fires when the root filesystem has less than 10% free space.
+
+#### Overview of the Monitoring Stack
+
+```
++------------------+         +--------------+         +-----------+
+|  Node Exporter   |-------->|  Prometheus  |-------->|  Grafana  |
+|  (collects disk  |  scrape |  (stores     |  query  |  (visual  |
+|   metrics)       |         |   time-series|         |   dashbrd)|
++------------------+         +--------------+         +-----------+
 ```
 
 ### Challenges
