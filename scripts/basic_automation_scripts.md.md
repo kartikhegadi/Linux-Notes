@@ -1,51 +1,8 @@
-# Linux & DevOps Automation Scripts Collection
+## Linux Automation Scripts
 
 A curated set of Bash utilities for workspace setup, file management, backups, system monitoring, user provisioning, security auditing, Docker/Kubernetes operations, AWS, and CI/CD.
 
-## Table of Contents
-
-- [1. Workspace & File Management](#1-workspace--file-management)
-  - [1.1 Workspace Initializer](#11-workspace-initializer)
-  - [1.2 Smart File Mover](#12-smart-file-mover)
-- [2. Backup & Restore](#2-backup--restore)
-  - [2.1 Remote Backup & Transfer (SCP)](#21-remote-backup--transfer-scp)
-  - [2.2 Local Backup & Restore Utility](#22-local-backup--restore-utility)
-- [3. System Monitoring](#3-system-monitoring)
-  - [3.1 System Health Monitor (CSV Logging)](#31-system-health-monitor-csv-logging)
-  - [3.2 Quick Disk Space Alert](#32-quick-disk-space-alert)
-  - [3.3 System Uptime, CPU & Memory Snapshot](#33-system-uptime-cpu--memory-snapshot)
-  - [3.4 Find Top 5 Largest Files](#34-find-top-5-largest-files)
-  - [3.5 Active SSH Sessions](#35-active-ssh-sessions)
-- [4. User Provisioning](#4-user-provisioning)
-  - [4.1 Bulk User Creation](#41-bulk-user-creation)
-  - [4.2 Bulk User Deletion](#42-bulk-user-deletion)
-  - [4.3 Single Quick User Creation](#43-single-quick-user-creation)
-- [5. Security & Log Auditing](#5-security--log-auditing)
-  - [5.1 Log Auditor & Rotator](#51-log-auditor--rotator)
-  - [5.2 Automated Log Cleanup](#52-automated-log-cleanup)
-- [6. Service Management](#6-service-management)
-  - [6.1 Service Health Check & Auto-Restart](#61-service-health-check--auto-restart)
-- [7. Docker](#7-docker)
-  - [7.1 List Running Containers](#71-list-running-containers)
-  - [7.2 Prune Unused Images](#72-prune-unused-images)
-  - [7.3 Backup Running Containers & Images](#73-backup-running-containers--images)
-- [8. Kubernetes](#8-kubernetes)
-  - [8.1 Pod Health Check](#81-pod-health-check)
-  - [8.2 Node Status Check](#82-node-status-check)
-  - [8.3 Restart All Pods in a Namespace](#83-restart-all-pods-in-a-namespace)
-  - [8.4 Live Pod Monitor](#84-live-pod-monitor)
-- [9. AWS](#9-aws)
-  - [9.1 List EC2 Instances](#91-list-ec2-instances)
-  - [9.2 S3 Bucket Sync](#92-s3-bucket-sync)
-- [10. CI/CD (Jenkins)](#10-cicd-jenkins)
-  - [10.1 Trigger a Jenkins Job](#101-trigger-a-jenkins-job)
-  - [10.2 Check Last Build Status](#102-check-last-build-status)
-
----
-
-## 1. Workspace & File Management
-
-### 1.1 Workspace Initializer
+### Workspace Initializer
 
 Sets up a development directory and populates it with dummy files for testing.
 
@@ -60,7 +17,7 @@ done
 echo "Workspace created with 10 files."
 ```
 
-### 1.2 Smart File Mover
+### Smart File Mover
 
 Moves `.txt` files between directories, with validation and error handling.
 
@@ -96,15 +53,9 @@ fi
 shopt -u nullglob
 ```
 
----
+### Remote Backup and Transfer
 
-## 2. Backup & Restore
-
-### 2.1 Remote Backup & Transfer (SCP)
-
-Archives a directory into a ZIP file and transfers it to a remote server over SCP.
-
-> **Prerequisite:** passwordless SSH key auth configured to the remote host.
+Archives a directory into a ZIP file and transfers it to a remote server over SCP. This requires passwordless SSH key authentication to be configured for the remote host.
 
 ```bash
 #!/bin/bash
@@ -148,9 +99,9 @@ else
 fi
 ```
 
-### 2.2 Local Backup & Restore Utility
+### Local Backup and Restore
 
-Interactive menu to back up `/var/www/html` (or any configured directory) and restore from a chosen archive.
+Interactive menu to back up a target directory and restore from a chosen archive.
 
 ```bash
 #!/bin/bash
@@ -187,13 +138,9 @@ case $CHOICE in
 esac
 ```
 
----
+### System Health Monitor
 
-## 3. System Monitoring
-
-### 3.1 System Health Monitor (CSV Logging)
-
-Checks CPU, memory, and disk usage against thresholds, prints alerts, and appends a row to a CSV log for reporting/trend analysis.
+Checks CPU, memory, and disk usage against thresholds, prints alerts, and appends a row to a CSV log for reporting and trend analysis.
 
 ```bash
 #!/bin/bash
@@ -231,9 +178,9 @@ fi
 echo "System Health Check Completed."
 ```
 
-### 3.2 Quick Disk Space Alert
+### Quick Disk Space Alert
 
-Lightweight, single-purpose disk usage check — useful as a cron job.
+A lightweight, single-purpose disk usage check, useful as a cron job.
 
 ```bash
 #!/bin/bash
@@ -248,7 +195,9 @@ else
 fi
 ```
 
-### 3.3 System Uptime, CPU & Memory Snapshot
+### System Snapshot
+
+Reports uptime, CPU usage, memory usage, and disk space in one pass.
 
 ```bash
 #!/bin/bash
@@ -266,7 +215,7 @@ echo -e "\nDisk Space Usage:"
 df -h
 ```
 
-### 3.4 Find Top 5 Largest Files
+### Finding the Largest Files
 
 ```bash
 #!/bin/bash
@@ -275,7 +224,7 @@ echo "Top 5 largest files in the system:"
 find / -type f -exec du -h {} + 2>/dev/null | sort -rh | head -n 5
 ```
 
-### 3.5 Active SSH Sessions
+### Active SSH Sessions
 
 ```bash
 #!/bin/bash
@@ -284,15 +233,9 @@ echo "Active SSH Sessions:"
 who | grep "pts"
 ```
 
----
+### Bulk User Creation
 
-## 4. User Provisioning
-
-### 4.1 Bulk User Creation
-
-Reads usernames from `users.txt`, creates accounts, sets a temporary password, and forces a password reset on first login. Logs actions to `/var/log/user_provision.log`.
-
-> **Requires root.** Change the temporary password before using in production, or generate one per user.
+Reads usernames from `users.txt`, creates accounts, sets a temporary password, and forces a password reset on first login. Logs actions to `/var/log/user_provision.log`. This script requires root and the temporary password should be changed before using it in production.
 
 ```bash
 #!/bin/bash
@@ -324,11 +267,9 @@ while IFS= read -r user || [ -n "$user" ]; do
 done < "$USER_FILE"
 ```
 
-### 4.2 Bulk User Deletion
+### Bulk User Deletion
 
-Reads usernames from `users.txt` and removes each account along with its home directory.
-
-> **Requires root. Destructive — verify `users.txt` before running.**
+Reads usernames from `users.txt` and removes each account along with its home directory. This script requires root and is destructive, so verify `users.txt` before running it.
 
 ```bash
 #!/bin/bash
@@ -358,9 +299,9 @@ while IFS= read -r user || [ -n "$user" ]; do
 done < "$USER_FILE"
 ```
 
-### 4.3 Single Quick User Creation
+### Quick Single User Creation
 
-Interactive one-off user creation for quick testing (not intended for bulk/production provisioning — see 4.1).
+Interactive one-off user creation for quick testing. For bulk or production provisioning, use the bulk creation script above instead.
 
 ```bash
 #!/bin/bash
@@ -374,13 +315,9 @@ echo "$USERNAME:$PASSWORD" | sudo chpasswd
 echo "✅ User $USERNAME created with a temporary password."
 ```
 
----
+### Log Auditor and Rotator
 
-## 5. Security & Log Auditing
-
-### 5.1 Log Auditor & Rotator
-
-Scans `auth.log` for repeated failed login attempts (>3), writes offending sources to `blacklist.txt`, then archives and removes logs older than 7 days.
+Scans `auth.log` for repeated failed login attempts (more than 3), writes offending sources to `blacklist.txt`, then archives and removes logs older than 7 days.
 
 ```bash
 #!/bin/bash
@@ -405,9 +342,9 @@ find "$LOG_DIR" -name "*.log" -mtime +7 -delete
 echo "Old logs archived and storage cleared."
 ```
 
-### 5.2 Automated Log Cleanup
+### Automated Log Cleanup
 
-Simpler cleanup-only variant: deletes logs older than a configurable number of days without archiving. Use 5.1 instead if you need an audit trail.
+A simpler cleanup-only variant that deletes logs older than a configurable number of days without archiving. Use the log auditor above instead if you need an audit trail.
 
 ```bash
 #!/bin/bash
@@ -420,11 +357,7 @@ find "$LOG_DIR" -type f -name "*.log" -mtime +$DAYS -exec rm -f {} \;
 echo "Log cleanup completed."
 ```
 
----
-
-## 6. Service Management
-
-### 6.1 Service Health Check & Auto-Restart
+### Service Health Check and Auto-Restart
 
 ```bash
 #!/bin/bash
@@ -439,11 +372,7 @@ else
 fi
 ```
 
----
-
-## 7. Docker
-
-### 7.1 List Running Containers
+### Listing Running Docker Containers
 
 ```bash
 #!/bin/bash
@@ -452,7 +381,7 @@ echo "Running Docker containers:"
 docker ps --format "table {{.ID}}\t{{.Image}}\t{{.Status}}"
 ```
 
-### 7.2 Prune Unused Images
+### Pruning Unused Docker Images
 
 ```bash
 #!/bin/bash
@@ -462,7 +391,7 @@ docker image prune -a -f
 echo "✅ Cleanup done!"
 ```
 
-### 7.3 Backup Running Containers & Images
+### Backing Up Docker Containers and Images
 
 Commits each running container to an image and saves both containers and all images as `.tar` archives.
 
@@ -484,11 +413,7 @@ docker images -q | xargs -I {} docker save -o "$BACKUP_DIR/{}.tar" {}
 echo "✅ Docker backup completed."
 ```
 
----
-
-## 8. Kubernetes
-
-### 8.1 Pod Health Check
+### Kubernetes Pod Health Check
 
 Reports any pod not in the `Running` state for a given namespace.
 
@@ -502,7 +427,7 @@ kubectl get pods -n "$NAMESPACE" --no-headers | awk '$3 != "Running" {print "⚠
 echo "Health Check Completed."
 ```
 
-### 8.2 Node Status Check
+### Kubernetes Node Status Check
 
 ```bash
 #!/bin/bash
@@ -511,9 +436,9 @@ echo "Checking Kubernetes Nodes..."
 kubectl get nodes | grep -v "Ready"
 ```
 
-### 8.3 Restart All Pods in a Namespace
+### Restarting All Pods in a Namespace
 
-> **Destructive** — force-deletes all pods in the target namespace so they are recreated by their controllers.
+This force-deletes all pods in the target namespace so they are recreated by their controllers. Treat it as a destructive operation.
 
 ```bash
 #!/bin/bash
@@ -525,7 +450,7 @@ kubectl delete pods --all -n "$NAMESPACE" --grace-period=0 --force
 echo "✅ All pods restarted!"
 ```
 
-### 8.4 Live Pod Monitor
+### Live Pod Monitor
 
 ```bash
 #!/bin/bash
@@ -536,11 +461,7 @@ echo "Monitoring pods in namespace: $NAMESPACE..."
 kubectl get pods -n "$NAMESPACE" --watch
 ```
 
----
-
-## 9. AWS
-
-### 9.1 List EC2 Instances
+### Listing EC2 Instances
 
 ```bash
 #!/bin/bash
@@ -549,7 +470,7 @@ echo "🔎 Fetching EC2 Instances..."
 aws ec2 describe-instances --query "Reservations[*].Instances[*].[InstanceId, PublicIpAddress]" --output table
 ```
 
-### 9.2 S3 Bucket Sync
+### S3 Bucket Sync
 
 ```bash
 #!/bin/bash
@@ -562,13 +483,9 @@ aws s3 sync "$SOURCE_DIR" "s3://$BUCKET_NAME" --delete
 echo "Sync Completed!"
 ```
 
----
+### Triggering a Jenkins Job
 
-## 10. CI/CD (Jenkins)
-
-> **Note:** Do not commit real API tokens. Load `USER` / `API_TOKEN` from environment variables or a secrets manager instead of hardcoding them.
-
-### 10.1 Trigger a Jenkins Job
+Do not commit real API tokens. Load `USER` and `API_TOKEN` from environment variables or a secrets manager instead of hardcoding them.
 
 ```bash
 #!/bin/bash
@@ -583,7 +500,7 @@ curl -X POST "$JENKINS_URL/job/$JOB_NAME/build" --user "$USER:$API_TOKEN"
 echo "✅ Job triggered successfully!"
 ```
 
-### 10.2 Check Last Build Status
+### Checking the Last Jenkins Build Status
 
 ```bash
 #!/bin/bash
@@ -597,14 +514,18 @@ echo "Fetching status of last build..."
 curl -s "$JENKINS_URL/job/$JOB_NAME/lastBuild/api/json" --user "$USER:$API_TOKEN" | jq -r '.result'
 ```
 
----
+### Challenges
 
-## Notes for Contributors
-
-- Scripts assume a Debian/Ubuntu-style environment (`apt`, `/var/log/auth.log`) unless noted otherwise.
-- Scripts requiring root (`useradd`, `userdel`, log rotation in `/var/log`) check `$EUID` before proceeding — keep this pattern when adding new scripts.
-- Avoid hardcoding credentials or tokens (see section 10) — use environment variables or a secrets manager.
-- Destructive operations (pod force-delete, user deletion, log deletion) are flagged with a warning callout above the code block.
+1. Modify the workspace initializer so the number of dummy files and the workspace name are passed in as arguments instead of hardcoded.
+2. Extend the smart file mover to accept a file extension as an argument instead of only moving `.txt` files.
+3. Change the remote backup script to also verify the archive's checksum after transfer, so you can confirm it wasn't corrupted in transit.
+4. Modify the system health monitor to send an email or Slack notification when a threshold is breached, instead of only printing to the terminal.
+5. Rewrite the bulk user creation script to generate a unique random password per user instead of reusing the same temporary password.
+6. Add a dry-run mode to the bulk user deletion script that lists which accounts would be deleted without actually removing them.
+7. Extend the log auditor to also block the offending IP addresses using `iptables` or `ufw` once they're written to `blacklist.txt`.
+8. Modify the service health check script to monitor a list of services instead of a single hardcoded one.
+9. Update the Kubernetes pod restart script to restart pods one at a time with a delay, instead of force-deleting all of them at once.
+10. Rewrite the Jenkins trigger script to poll the build status after triggering it and print the final result (success or failure) instead of exiting immediately.
 
 ## 📝 Document Info
 
